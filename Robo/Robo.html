@@ -1,0 +1,222 @@
+# Estrutura do Monorepo
+# Copie cada bloco para os arquivos correspondentes no seu projeto.
+
+# README.md
+'''
+# Stock Analyzer Monorepo
+Repositório com módulos: Radar de Ações, Backtester, Painel em Tempo Real e Analisador de Opções.
+
+## Requisitos
+- Docker & Docker Compose
+- Python 3.10+
+
+## Como rodar (local)
+1. git clone <seu-repo>
+2. cp .env.example .env e preencha chaves
+3. make build
+4. docker compose up -d
+5. make seed
+6. Acesse API em http://localhost:8000/docs e Streamlit em http://localhost:8501
+'''
+
+# docker-compose.yml
+'''
+version: '3.8'
+services:
+  api:
+    build: ./api
+    ports:
+      - '8000:80'
+    env_file: .env
+    depends_on:
+      - db
+  streamlit:
+    build: ./apps/streamlit
+    ports:
+      - '8501:8501'
+    env_file: .env
+    depends_on:
+      - api
+  worker:
+    build: ./worker
+    env_file: .env
+    depends_on:
+      - api
+  db:
+    image: sqlite3:latest
+    command: sleep infinity
+    volumes:
+      - ./data:/data
+'''
+
+# .env.example
+'''
+API_KEY=
+DATA_PROVIDER=yfinance
+DATABASE_URL=sqlite:///data/stock_data.db
+TELEGRAM_TOKEN=
+TELEGRAM_CHAT_ID=
+'''
+
+# Makefile
+'''
+build:
+	docker compose build
+up:
+	docker compose up -d
+seed:
+	python3 scripts/seed.py
+backtest:
+	python3 backtester/example_backtest.py
+'''
+
+# requirements.txt
+'''
+fastapi
+uvicorn[standard]
+pydantic
+pandas
+numpy
+sqlalchemy
+requests
+yfinance
+streamlit
+python-dotenv
+pytest
+'''
+
+# api/main.py
+'''
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from services.data_provider import DataProvider
+from core.indicators import compute_indicators
+
+app = FastAPI(title='Stock Analyzer API')
+provider = DataProvider()
+
+class BacktestRequest(BaseModel):
+    symbol: str
+    start: str
+    end: str
+
+@app.get('/health')
+def health():
+    return {'status': 'ok'}
+
+@app.get('/price/{symbol}')
+def price(symbol: str):
+    df = provider.get_history(symbol)
+    if df is None:
+        raise HTTPException(status_code=404, detail='Symbol not found')
+    return df.tail(30).to_dict(orient='records')
+
+@app.post('/indicators')
+def indicators(req: BacktestRequest):
+    df = provider.get_history(req.symbol, req.start, req.end)
+    if df is None or df.empty:
+        raise HTTPException(status_code=404, detail='No data')
+    return compute_indicators(df).to_dict(orient='records')
+'''
+
+# core/indicators.py
+'''
+import pandas as pd
+import numpy as np
+
+def sma(df, window):
+    return df['Close'].rolling(window).mean()
+
+def atr(df, window=14):
+    high_low = df['High'] - df['Low']
+    high_close = np.abs(df['High'] - df['Close'].shift())
+    low_close = np.abs(df['Low'] - df['Close'].shift())
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    return tr.rolling(window).mean()
+
+def rsi(df, window=14):
+    delta = df['Close'].diff()
+    up, down = delta.clip(lower=0), -1*delta.clip(upper=0)
+    ma_up = up.ewm(alpha=1/window, adjust=False).mean()
+    ma_down = down.ewm(alpha=1/window, adjust=False).mean()
+    rs = ma_up / ma_down
+    return 100 - (100 / (1 + rs))
+
+def compute_indicators(df):
+    df = df.copy()
+    df['SMA_20'] = sma(df, 20)
+    df['SMA_50'] = sma(df, 50)
+    df['ATR_14'] = atr(df)
+    df['RSI_14'] = rsi(df)
+    df['Volatility'] = df['Close'].pct_change().rolling(21).std() * np.sqrt(252)
+    return df
+'''
+
+# services/data_provider.py
+'''
+import yfinance as yf
+import pandas as pd
+from sqlalchemy import create_engine
+import os
+
+class DataProvider:
+    def __init__(self):
+        url = os.getenv('DATABASE_URL', 'sqlite:///data/stock_data.db')
+        self.engine = create_engine(url)
+
+    def get_history(self, symbol, start=None, end=None, period='2y'):
+        ticker = yf.Ticker(symbol)
+        try:
+            df = ticker.history(start=start, end=end, period=period)
+            if df.empty:
+                return None
+            df = df.reset_index()
+            df.rename(columns={'Date':'Datetime'}, inplace=True)
+            return df
+        except Exception:
+            return None
+'''
+
+# apps/streamlit/radar.py
+'''
+import streamlit as st
+import requests
+
+st.title('Radar de Ações - Protótipo')
+SYMBOL = st.text_input('Símbolo (ex: PETR4.SA)', 'AAPL')
+if st.button('Buscar'):
+    r = requests.get(f'http://api:80/price/{SYMBOL}')
+    if r.status_code == 200:
+        st.write(r.json())
+    else:
+        st.error('Erro ao buscar dados')
+'''
+
+# backtester/example_backtest.py
+'''
+import pandas as pd
+from services.data_provider import DataProvider
+from core.indicators import compute_indicators
+
+provider = DataProvider()
+
+df = provider.get_history('AAPL', period='1y')
+if df is None:
+    print('Sem dados')
+else:
+    df = compute_indicators(df)
+    df['signal'] = (df['SMA_20'] > df['SMA_50']).astype(int)
+    df['positions'] = df['signal'].diff().fillna(0)
+    print(df[['Datetime','Close','SMA_20','SMA_50','positions']].tail(20))
+'''
+
+# scripts/seed.py
+'''
+from services.data_provider import DataProvider
+
+symbols = ['AAPL','MSFT','GOOG']
+provider = DataProvider()
+for s in symbols:
+    df = provider.get_history(s, period='2y')
+    print(s, '->', None if df is None else len(df))
+'''

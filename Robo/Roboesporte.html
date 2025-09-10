@@ -1,0 +1,71 @@
+import requests
+import streamlit as st
+from datetime import date
+
+API_KEY = "SUA_API_KEY_FOOTBALL_DATA"
+TOKEN = "SEU_TOKEN_TELEGRAM"
+CHAT_ID = "SEU_CHAT_ID"
+
+# Função pegar jogos do dia
+def pegar_jogos():
+    hoje = date.today().isoformat()
+    url = f"https://api.football-data.org/v4/matches?dateFrom={hoje}&dateTo={hoje}"
+    headers = {"X-Auth-Token": API_KEY}
+    return requests.get(url, headers=headers).json().get("matches", [])
+
+# Média gols últimos 5 jogos
+def media_gols(time_id):
+    url = f"https://api.football-data.org/v4/teams/{time_id}/matches?limit=5"
+    headers = {"X-Auth-Token": API_KEY}
+    jogos = requests.get(url, headers=headers).json().get("matches", [])
+    gols_marcados = sum(j['score']['fullTime']['home'] if j['homeTeam']['id']==time_id else j['score']['fullTime']['away'] for j in jogos)
+    gols_sofridos = sum(j['score']['fullTime']['away'] if j['homeTeam']['id']==time_id else j['score']['fullTime']['home'] for j in jogos)
+    n = len(jogos) if len(jogos) > 0 else 1
+    return gols_marcados/n, gols_sofridos/n
+
+# Confronto direto últimos 5 jogos
+def confronto_direto(id1, id2):
+    url = f"https://api.football-data.org/v4/matches?teamIds={id1},{id2}&limit=5"
+    headers = {"X-Auth-Token": API_KEY}
+    jogos = requests.get(url, headers=headers).json().get("matches", [])
+    v1 = sum(1 for j in jogos if (j['homeTeam']['id']==id1 and j['score']['fullTime']['home']>j['score']['fullTime']['away']) or (j['awayTeam']['id']==id1 and j['score']['fullTime']['away']>j['score']['fullTime']['home']))
+    v2 = sum(1 for j in jogos if (j['homeTeam']['id']==id2 and j['score']['fullTime']['home']>j['score']['fullTime']['away']) or (j['awayTeam']['id']==id2 and j['score']['fullTime']['away']>j['score']['fullTime']['home']))
+    return v1, v2
+
+# Calcular probabilidade
+def calcular_probabilidade(gols_casa, gols_fora, v_confronto_casa, v_confronto_fora, peso_casa=1.1):
+    score_casa = gols_casa * peso_casa + v_confronto_casa
+    score_fora = gols_fora + v_confronto_fora
+    total = score_casa + score_fora
+    prob_casa = round((score_casa/total)*100,2)
+    prob_fora = round((score_fora/total)*100,2)
+    prob_empate = round(100 - prob_casa - prob_fora,2)
+    return prob_casa, prob_empate, prob_fora
+
+# Enviar Telegram
+def enviar_telegram(mensagem):
+    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": mensagem}
+    requests.post(url, data=data)
+
+# Streamlit Dashboard
+st.title("⚽ Robô de Probabilidades Pré-Jogo")
+prob_min = st.slider("Probabilidade mínima para alertas (%)", 50, 100, 60)
+
+jogos = pegar_jogos()
+for jogo in jogos:
+    casa_id = jogo["homeTeam"]["id"]
+    fora_id = jogo["awayTeam"]["id"]
+    gols_casa, _ = media_gols(casa_id)
+    gols_fora, _ = media_gols(fora_id)
+    v_casa, v_fora = confronto_direto(casa_id, fora_id)
+    prob_casa, prob_empate, prob_fora = calcular_probabilidade(gols_casa, gols_fora, v_casa, v_fora)
+    
+    if prob_casa >= prob_min or prob_fora >= prob_min:
+        mensagem = f"⚽ {jogo['homeTeam']['name']} x {jogo['awayTeam']['name']}\nVitória {jogo['homeTeam']['name']}: {prob_casa}%\nEmpate: {prob_empate}%\nVitória {jogo['awayTeam']['name']}: {prob_fora}%\nMédia gols recentes: {round(gols_casa,1)} x {round(gols_fora,1)}\nVitórias confronto direto: {v_casa} x {v_fora}"
+        enviar_telegram(mensagem)
+    
+    st.subheader(f"{jogo['homeTeam']['name']} x {jogo['awayTeam']['name']}")
+    st.text(f"Probabilidades: {prob_casa}% | {prob_empate}% | {prob_fora}%")
+    st.text(f"Média gols recentes: {round(gols_casa,1)} x {round(gols_fora,1)}")
+    st.text(f"Vitórias confronto direto: {v_casa} x {v_fora}")

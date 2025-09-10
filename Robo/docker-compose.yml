@@ -1,0 +1,31 @@
+version: '3.8'
+services:
+  api:
+    build: ./api
+    ports:
+      - '8000:80'
+    env_file: .env
+    depends_on:
+      - db
+  streamlit:
+    build: ./apps/streamlit
+    ports:
+      - '8501:8501'
+    env_file: .env
+    depends_on:
+      - api
+  worker:
+    build: ./worker
+    env_file: .env
+    depends_on:
+      - api
+  db:
+    image: sqlite3:latest
+    command: sleep infinity
+    volumes:
+      - ./data:/data
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"

@@ -18,12 +18,10 @@ FOOTBALL_DATA_API_KEY = os.getenv('FOOTBALL_DATA_API_KEY', 'cd267ac93b09491ca931
 
 # ==================== FUNÇÕES DE FUTEBOL ====================
 
-def pegar_jogos_data(data_inicio, data_fim=None):
-    """Busca jogos em um período específico"""
-    if data_fim is None:
-        data_fim = data_inicio
-    
-    url = f"https://api.football-data.org/v4/matches?dateFrom={data_inicio}&dateTo={data_fim}"
+def pegar_jogos_hoje():
+    """Busca jogos do dia atual"""
+    hoje = date.today().isoformat()
+    url = f"https://api.football-data.org/v4/matches?dateFrom={hoje}&dateTo={hoje}"
     headers = {"X-Auth-Token": FOOTBALL_DATA_API_KEY}
     try:
         response = requests.get(url, headers=headers)
@@ -389,144 +387,102 @@ with tab2:
         st.markdown("### ⚙️ Configurações")
         prob_minima = st.slider("Probabilidade mínima para destaque (%)", 50, 100, 60)
         peso_casa = st.slider("Peso do fator casa", 1.0, 1.5, 1.1, 0.1)
-        
-        # Seletor de data
-        st.markdown("### 📅 Data dos Jogos")
-        data_escolhida = st.date_input(
-            "Escolha a data",
-            value=date.today(),
-            min_value=date.today(),
-            max_value=date.today() + datetime.timedelta(days=7)
-        )
-        
-        # Opção para buscar próximos dias
-        buscar_proximos = st.checkbox("Buscar próximos 3 dias", value=True)
     
     with col2:
-        st.markdown("### 📊 Jogos Encontrados")
+        st.markdown("### 📊 Jogos de Hoje")
         
-        # Buscar jogos
-        with st.spinner("Buscando jogos..."):
-            if buscar_proximos:
-                # Buscar próximos 3 dias
-                data_fim = data_escolhida + datetime.timedelta(days=3)
-                jogos = pegar_jogos_data(data_escolhida.isoformat(), data_fim.isoformat())
-            else:
-                # Buscar apenas o dia escolhido
-                jogos = pegar_jogos_data(data_escolhida.isoformat())
+        # Buscar jogos do dia
+        with st.spinner("Buscando jogos do dia..."):
+            jogos = pegar_jogos_hoje()
         
         if not jogos:
-            st.warning(f"Nenhum jogo encontrado para o período selecionado.")
+            st.warning("Nenhum jogo encontrado para hoje.")
         else:
-            if buscar_proximos:
-                st.success(f"Encontrados {len(jogos)} jogos nos próximos 3 dias!")
-            else:
-                st.success(f"Encontrados {len(jogos)} jogos para {data_escolhida.strftime('%d/%m/%Y')}!")
+            st.success(f"Encontrados {len(jogos)} jogos para hoje!")
             
-            # Agrupar jogos por data
-            jogos_por_data = {}
-            for jogo in jogos:
-                data_jogo = jogo['utcDate'][:10]  # YYYY-MM-DD
-                if data_jogo not in jogos_por_data:
-                    jogos_por_data[data_jogo] = []
-                jogos_por_data[data_jogo].append(jogo)
-            
-            # Mostrar jogos agrupados por data
-            for data_jogo, jogos_dia in jogos_por_data.items():
-                data_formatada = datetime.datetime.strptime(data_jogo, '%Y-%m-%d').strftime('%d/%m/%Y')
-                st.markdown(f"### 📅 {data_formatada}")
-                
-                for jogo in jogos_dia:
+            for i, jogo in enumerate(jogos):
+                if jogo['status'] == 'SCHEDULED' or jogo['status'] == 'TIMED':
                     casa_id = jogo["homeTeam"]["id"]
                     fora_id = jogo["awayTeam"]["id"]
                     casa_nome = jogo["homeTeam"]["name"]
                     fora_nome = jogo["awayTeam"]["name"]
                     
-                    # Mostrar status do jogo
-                    status_jogo = jogo['status']
-                    if status_jogo == 'FINISHED':
-                        resultado = f"{jogo['score']['fullTime']['home']} x {jogo['score']['fullTime']['away']}"
-                        st.markdown(f"**{casa_nome} x {fora_nome}** - ✅ Finalizado: {resultado}")
-                        continue
-                    elif status_jogo == 'SCHEDULED':
-                        st.markdown(f"**{casa_nome} x {fora_nome}** - ⏰ Agendado")
-                    elif status_jogo == 'TIMED':
-                        st.markdown(f"**{casa_nome} x {fora_nome}** - 🔴 Ao vivo")
+                    # Buscar estatísticas
+                    with st.spinner(f"Analisando {casa_nome} x {fora_nome}..."):
+                        gols_casa, _ = media_gols_time(casa_id)
+                        gols_fora, _ = media_gols_time(fora_id)
+                        v_casa, v_fora = confronto_direto(casa_id, fora_id)
+                        prob_casa, prob_empate, prob_fora = calcular_probabilidade(
+                            gols_casa, gols_fora, v_casa, v_fora, peso_casa
+                        )
                     
-                    # Só analisar jogos futuros ou ao vivo
-                    if jogo['status'] in ['SCHEDULED', 'TIMED']:
-                        # Buscar estatísticas
-                        with st.spinner(f"Analisando {casa_nome} x {fora_nome}..."):
-                            gols_casa, _ = media_gols_time(casa_id)
-                            gols_fora, _ = media_gols_time(fora_id)
-                            v_casa, v_fora = confronto_direto(casa_id, fora_id)
-                            prob_casa, prob_empate, prob_fora = calcular_probabilidade(
-                                gols_casa, gols_fora, v_casa, v_fora, peso_casa
-                            )
-                        
-                        # Determinar cor do card baseado na probabilidade
-                        max_prob = max(prob_casa, prob_empate, prob_fora)
-                        if max_prob >= prob_minima:
-                            card_color = "#1f77b4"  # Azul para destaque
-                            border_color = "#ff6b6b"  # Borda vermelha
-                        else:
-                            card_color = "#2d3748"  # Cinza escuro
-                            border_color = "#4a5568"  # Borda cinza
-                        
-                        # Card do jogo
-                        st.markdown(f"""
-                        <div style='background-color: {card_color}; padding: 20px; border-radius: 10px; margin: 15px 0; border: 2px solid {border_color};'>
-                            <h3 style='color: white; margin: 0 0 15px 0; text-align: center;'>{casa_nome} x {fora_nome}</h3>
-                            <div style='display: flex; justify-content: space-around; margin: 15px 0;'>
-                                <div style='text-align: center;'>
-                                    <div style='color: #90EE90; font-size: 24px; font-weight: bold;'>{prob_casa}%</div>
-                                    <div style='color: white; font-size: 14px;'>Vitória Casa</div>
-                                </div>
-                                <div style='text-align: center;'>
-                                    <div style='color: #FFD700; font-size: 24px; font-weight: bold;'>{prob_empate}%</div>
-                                    <div style='color: white; font-size: 14px;'>Empate</div>
-                                </div>
-                                <div style='text-align: center;'>
-                                    <div style='color: #FFB6C1; font-size: 24px; font-weight: bold;'>{prob_fora}%</div>
-                                    <div style='color: white; font-size: 14px;'>Vitória Fora</div>
-                                </div>
+                    # Determinar cor do card baseado na probabilidade
+                    max_prob = max(prob_casa, prob_empate, prob_fora)
+                    if max_prob >= prob_minima:
+                        card_color = "#1f77b4"  # Azul para destaque
+                        border_color = "#ff6b6b"  # Borda vermelha
+                    else:
+                        card_color = "#2d3748"  # Cinza escuro
+                        border_color = "#4a5568"  # Borda cinza
+                    
+                    # Card do jogo
+                    st.markdown(f"""
+                    <div style='background-color: {card_color}; padding: 20px; border-radius: 10px; margin: 15px 0; border: 2px solid {border_color};'>
+                        <h3 style='color: white; margin: 0 0 15px 0; text-align: center;'>{casa_nome} x {fora_nome}</h3>
+                        <div style='display: flex; justify-content: space-around; margin: 15px 0;'>
+                            <div style='text-align: center;'>
+                                <div style='color: #90EE90; font-size: 24px; font-weight: bold;'>{prob_casa}%</div>
+                                <div style='color: white; font-size: 14px;'>Vitória Casa</div>
                             </div>
-                            <div style='margin-top: 15px; padding-top: 15px; border-top: 1px solid #4a5568;'>
-                                <div style='color: white; font-size: 14px; margin: 5px 0;'>
-                                    📊 <strong>Média gols recentes:</strong> {round(gols_casa,1)} x {round(gols_fora,1)}
-                                </div>
-                                <div style='color: white; font-size: 14px; margin: 5px 0;'>
-                                    ⚔️ <strong>Vitórias confronto direto:</strong> {v_casa} x {v_fora}
-                                </div>
-                                <div style='color: white; font-size: 14px; margin: 5px 0;'>
-                                    🏠 <strong>Fator casa:</strong> {peso_casa}x
-                                </div>
+                            <div style='text-align: center;'>
+                                <div style='color: #FFD700; font-size: 24px; font-weight: bold;'>{prob_empate}%</div>
+                                <div style='color: white; font-size: 14px;'>Empate</div>
+                            </div>
+                            <div style='text-align: center;'>
+                                <div style='color: #FFB6C1; font-size: 24px; font-weight: bold;'>{prob_fora}%</div>
+                                <div style='color: white; font-size: 14px;'>Vitória Fora</div>
                             </div>
                         </div>
-                        """, unsafe_allow_html=True)
-                        
-                        # Gráfico de probabilidades
-                        fig_prob = go.Figure(data=[
-                            go.Bar(
-                                x=['Vitória Casa', 'Empate', 'Vitória Fora'],
-                                y=[prob_casa, prob_empate, prob_fora],
-                                marker_color=['#90EE90', '#FFD700', '#FFB6C1'],
-                                text=[f'{prob_casa}%', f'{prob_empate}%', f'{prob_fora}%'],
-                                textposition='auto',
-                            )
-                        ])
-                        
-                        fig_prob.update_layout(
-                            title=f"Probabilidades - {casa_nome} x {fora_nome}",
-                            xaxis_title="Resultado",
-                            yaxis_title="Probabilidade (%)",
-                            height=300,
-                            showlegend=False,
-                            plot_bgcolor='rgba(0,0,0,0)',
-                            paper_bgcolor='rgba(0,0,0,0)',
-                            font=dict(color='white')
+                        <div style='margin-top: 15px; padding-top: 15px; border-top: 1px solid #4a5568;'>
+                            <div style='color: white; font-size: 14px; margin: 5px 0;'>
+                                📊 <strong>Média gols recentes:</strong> {round(gols_casa,1)} x {round(gols_fora,1)}
+                            </div>
+                            <div style='color: white; font-size: 14px; margin: 5px 0;'>
+                                ⚔️ <strong>Vitórias confronto direto:</strong> {v_casa} x {v_fora}
+                            </div>
+                            <div style='color: white; font-size: 14px; margin: 5px 0;'>
+                                🏠 <strong>Fator casa:</strong> {peso_casa}x
+                            </div>
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # Gráfico de probabilidades
+                    fig_prob = go.Figure(data=[
+                        go.Bar(
+                            x=['Vitória Casa', 'Empate', 'Vitória Fora'],
+                            y=[prob_casa, prob_empate, prob_fora],
+                            marker_color=['#90EE90', '#FFD700', '#FFB6C1'],
+                            text=[f'{prob_casa}%', f'{prob_empate}%', f'{prob_fora}%'],
+                            textposition='auto',
                         )
-                        
-                        st.plotly_chart(fig_prob, use_container_width=True)
-                        
-                        st.markdown("---")
+                    ])
+                    
+                    fig_prob.update_layout(
+                        title=f"Probabilidades - {casa_nome} x {fora_nome}",
+                        xaxis_title="Resultado",
+                        yaxis_title="Probabilidade (%)",
+                        height=300,
+                        showlegend=False,
+                        plot_bgcolor='rgba(0,0,0,0)',
+                        paper_bgcolor='rgba(0,0,0,0)',
+                        font=dict(color='white')
+                    )
+                    
+                    st.plotly_chart(fig_prob, use_container_width=True)
+                    
+                    st.markdown("---")
+
+
+
+

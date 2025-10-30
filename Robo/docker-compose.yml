@@ -1,26 +1,29 @@
 version: '3.8'
 services:
   api:
-    build: ./api
+    build:
+      context: .
+      dockerfile: Dockerfile.api
     ports:
       - '8000:80'
     env_file: .env
     depends_on:
       - db
   streamlit:
-    build: ./apps/streamlit
+    build:
+      context: .
+      dockerfile: Dockerfile.streamlit
     ports:
       - '8501:8501'
     env_file: .env
     depends_on:
       - api
-  worker:
-    build: ./worker
-    env_file: .env
-    depends_on:
-      - api
+    volumes:
+      - ./apps/streamlit:/app/apps/streamlit
+      - ./core:/app/core
+      - ./services:/app/services
   db:
-    image: sqlite3:latest
+    image: alpine:latest
     command: sleep infinity
     volumes:
       - ./data:/data
@@ -28,4 +31,4 @@ services:
     image: redis:latest
     container_name: redis
     ports:
-      - "6379:6379"
+      - "6380:6379"

@@ -9,3 +9,5 @@ yfinance
 streamlit
 python-dotenv
 pytest
+plotly
+dash

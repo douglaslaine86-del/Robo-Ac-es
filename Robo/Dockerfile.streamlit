@@ -1,0 +1,18 @@
+FROM python:3.10-slim
+
+WORKDIR /app
+
+# Copiar requirements e instalar dependências
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copiar código do Streamlit
+COPY apps/streamlit/ ./apps/streamlit/
+COPY core/ ./core/
+COPY services/ ./services/
+
+# Expor porta
+EXPOSE 8501
+
+# Comando para executar o Streamlit em modo desenvolvimento
+CMD ["streamlit", "run", "apps/streamlit/radar.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.runOnSave=true", "--server.fileWatcherType=poll"]
